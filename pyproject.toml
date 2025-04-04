@@ -3,5 +3,5 @@ name = "iteboshi"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = ["transformers", "datasets", "huggingface_hub[hf_xet]", "torch", "torchaudio", "librosa", "soundfile", "evaluate", "jiwer", "accelerate", "deepspeed", "wandb"]

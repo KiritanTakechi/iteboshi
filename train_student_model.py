@@ -38,7 +38,7 @@ per_device_eval_batch_size = 24   # 每个设备的评估批次大小
 gradient_accumulation_steps = 1   # 梯度累积步数 (有效批次大小 = train_batch_size * grad_acc_steps)
 learning_rate = 2e-5              # 学习率
 warmup_steps = 500                # 预热步数
-max_steps = 20000                 # 最大训练步数
+max_steps = 10000                 # 最大训练步数
 gradient_checkpointing = True     # 是否启用梯度检查点 (节省显存)
 bf16 = True                       # 是否启用混合精度训练 (需要兼容 GPU)
 evaluation_strategy = "steps"     # 评估策略
@@ -216,8 +216,8 @@ def main():
         pred_ids = pred.predictions
         label_ids = pred.label_ids
         label_ids[label_ids == -100] = processor.tokenizer.pad_token_id # type: ignore
-        pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True) # type: ignore
-        label_str = processor.batch_decode(label_ids, skip_special_tokens=True) # type: ignore
+        pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
+        label_str = processor.batch_decode(label_ids, skip_special_tokens=True)
 
         try:
             results = metric.compute(predictions=pred_str, references=label_str)
