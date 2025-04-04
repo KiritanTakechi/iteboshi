@@ -38,7 +38,7 @@ per_device_eval_batch_size = 24   # 每个设备的评估批次大小
 gradient_accumulation_steps = 1   # 梯度累积步数 (有效批次大小 = train_batch_size * grad_acc_steps)
 learning_rate = 2e-5              # 学习率
 warmup_steps = 500                # 预热步数
-max_steps = 4000                  # 最大训练步数
+max_steps = 20000                 # 最大训练步数
 gradient_checkpointing = True     # 是否启用梯度检查点 (节省显存)
 bf16 = True                       # 是否启用混合精度训练 (需要兼容 GPU)
 evaluation_strategy = "steps"     # 评估策略
@@ -110,7 +110,7 @@ def main():
     print(f"加载 Processor: {processor_checkpoint}")
     try:
         # 明确指定语言和任务，这些信息会随模型一起保存和上传
-        processor = WhisperProcessor.from_pretrained(processor_checkpoint, language="Chinese", task="transcribe")
+        processor: WhisperProcessor = WhisperProcessor.from_pretrained(processor_checkpoint, language="Chinese", task="transcribe") # type: ignore
         processor.tokenizer.set_prefix_tokens(language="chinese", task="transcribe") # 再次确认设置 # type: ignore
         print(f"Processor 加载成功。语言: {processor.tokenizer.language}, 任务: {processor.tokenizer.task}") # type: ignore
     except Exception as e:
@@ -169,7 +169,7 @@ def main():
         columns_to_remove = [col for col in dataset["train"].column_names if col != 'input_features']
         if 'sentence' in columns_to_remove: columns_to_remove.remove('sentence') # 确保 sentence 在处理前不被移除
 
-        dataset = dataset.map(
+        tokenized_dataset = dataset.map(
             prepare_labels,
             batched=True,
             num_proc=num_proc_tokenizer,
@@ -178,7 +178,7 @@ def main():
 
         print("文本标签 Tokenization 完成。")
         print("处理后的数据集结构 (包含 input_features 和 labels):")
-        print(dataset)
+        print(tokenized_dataset)
     except Exception as e:
         print(f"Tokenizing 标签时出错: {e}")
         import traceback
@@ -187,6 +187,21 @@ def main():
 
     # 4. 实例化数据收集器
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+
+    # 在此调试 Data Collator 输出
+    print("\nDebugging Data Collator...")
+    try:
+        sample_batch = [tokenized_dataset["train"][i] for i in range(4)] # 取几个样本
+        collated_batch = data_collator(sample_batch)
+        print("Collated Input Features Shape:", collated_batch["input_features"].shape)
+        print("Collated Labels Shape:", collated_batch["labels"].shape)
+        print("Collated Labels Sample (first sample):", collated_batch["labels"][0])
+        print("Collated Labels contain -100:", -100 in collated_batch["labels"])
+        num_non_ignored_collated = (collated_batch["labels"] != -100).sum().item()
+        print("Non-ignored tokens in collated batch:", num_non_ignored_collated)
+    except Exception as e:
+        print(f"调试 Data Collator 时出错: {e}")
+    print("Finished Debugging Data Collator.\n")
 
     # 5. 加载评估指标 (WER - 字错误率)
     print("加载 WER 评估指标...")
@@ -200,22 +215,20 @@ def main():
     def compute_metrics(pred):
         pred_ids = pred.predictions
         label_ids = pred.label_ids
-
-        # 将标签中的 -100 替换回 pad_token_id
         label_ids[label_ids == -100] = processor.tokenizer.pad_token_id # type: ignore
-
-        # 使用 processor 解码预测和标签 ID
         pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True) # type: ignore
         label_str = processor.batch_decode(label_ids, skip_special_tokens=True) # type: ignore
 
-        # 计算 WER
         try:
-            wer = 100 * metric.compute(predictions=pred_str, references=label_str) # type: ignore
+            results = metric.compute(predictions=pred_str, references=label_str)
+            if results is not None and 'wer' in results:
+                wer = 100 * results['wer']
+            else:
+                print(f"警告: metric.compute 返回了意外结果: {results}")
+                wer = float('inf')
         except Exception as e:
             print(f"计算 WER 时出错: {e}")
-            print("预测样本:", pred_str[:2])
-            print("参考样本:", label_str[:2])
-            wer = float('inf') # 返回一个无效值
+            wer = float('inf')
 
         return {"wer": wer}
 
@@ -226,7 +239,6 @@ def main():
             student_model_path,
             # low_cpu_mem_usage=True, # 如果加载模型时 CPU 内存不足，可以尝试开启
         )
-        # **重要：设置解码相关的配置，这些配置会随模型一起保存和上传**
         model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(language="chinese", task="transcribe") # type: ignore
         model.config.suppress_tokens = [] # 这里可以添加需要抑制生成的 token ID 列表
         # 确保在模型加载后启用梯度检查点 (如果配置为 True)
@@ -257,7 +269,7 @@ def main():
     print(f"训练完成后模型将上传到 Hugging Face Hub: {hub_model_id}")
     print(f"训练过程将记录到 WandB 项目: '{wandb_project_name}', 运行名称: '{wandb_run_name}'")
 
-    # (可选) 尝试预先创建 Hugging Face Hub 仓库，如果不存在
+    # 尝试预先创建 Hugging Face Hub 仓库，如果不存在
     try:
         create_repo(hub_model_id, exist_ok=True, token=hf_token if isinstance(hf_token, str) else None)
         print(f"Hugging Face Hub 仓库 {hub_model_id} 已确认存在或已创建。")
@@ -294,8 +306,6 @@ def main():
                                             # "end": 只在训练结束时推送最佳模型
         hub_token=hf_token if isinstance(hf_token, str) else None, # 传递 Hub token
         save_total_limit=2,                 # 最多保留最近的几个 checkpoint
-        # **可选 WandB 特定参数 (通常不需要在这里设置，通过环境变量或 wandb init 更好)**
-        # wandb_project=wandb_project_name, # 也可以在这里设置项目名，但环境变量优先
     )
 
     # 9. 实例化 Trainer
@@ -304,11 +314,11 @@ def main():
     trainer = Seq2SeqTrainer(
             args=training_args,
             model=model,
-            train_dataset=dataset["train"],
-            eval_dataset=dataset.get("validation"), # 使用 .get 以防数据集中没有 'validation' split
+            train_dataset=tokenized_dataset["train"],
+            eval_dataset=tokenized_dataset.get("validation"), # 使用 .get 以防数据集中没有 'validation' split
             data_collator=data_collator,
             compute_metrics=compute_metrics,
-            processing_class=processor, # 这里需要传入 processor 用于日志记录和可能的输入处理 # type: ignore
+            processing_class=processor, # 这里需要传入 processor 用于日志记录和可能的输入处理
         )
 
     # 10. 开始训练
@@ -329,11 +339,11 @@ def main():
         trainer.save_state() # 保存 Trainer 状态 (包括随机种子等)
         print(f"最终训练状态和指标已保存到本地目录: {training_output_dir}")
 
-        # 评估测试集 (可选)
-        if "test" in dataset:
-            if dataset.get("test"): # 确保 test split 存在且不为空
+        # 评估测试集
+        if "test" in tokenized_dataset:
+            if tokenized_dataset.get("test"): # 确保 test split 存在且不为空
                 print("评估测试集...")
-                test_metrics = trainer.evaluate(eval_dataset=dataset["test"]) # type: ignore
+                test_metrics = trainer.evaluate(eval_dataset=tokenized_dataset["test"]) # type: ignore
                 trainer.log_metrics("test", test_metrics) # 记录测试集指标 (也会发送到 wandb)
                 trainer.save_metrics("test", test_metrics) # 保存测试集指标到本地 json 文件
             else:
@@ -341,7 +351,6 @@ def main():
         else:
             print("数据集中未找到 'test' split，跳过测试集评估。")
 
-        # **手动触发一次最终上传到 Hub (可选, 作为保险)**
         # 如果 hub_strategy='end'，或者你想确保最终的最佳模型被明确推送
         print("准备将最终/最佳模型推送到 Hugging Face Hub...")
         try:
@@ -358,7 +367,6 @@ def main():
         import traceback
         traceback.print_exc() # 打印详细的错误堆栈信息
     finally:
-        # **确保 wandb 运行结束** (虽然 Trainer 通常会处理，但加上更保险)
         # 检查 wandb 是否已被初始化
         if wandb.run is not None:
             wandb.finish()
