@@ -27,6 +27,7 @@ def main():
 
     # 2. 修改配置以创建学生模型配置
     student_config = WhisperConfig.from_dict(teacher_config.to_dict()) # 复制配置
+    # student_config.forced_decoder_ids = None
     student_config.decoder_layers = student_decoder_layers
     print(f"学生模型配置已修改: 解码器层数 = {student_config.decoder_layers}")
 

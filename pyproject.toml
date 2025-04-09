@@ -1,7 +1,7 @@
 [project]
 name = "iteboshi"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "A library for training and evaluating speech recognition models."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["transformers", "datasets", "huggingface_hub[hf_xet]", "torch", "torchaudio", "librosa", "soundfile", "evaluate", "jiwer", "accelerate", "deepspeed", "wandb"]
+dependencies = ["transformers==4.48.3", "tokenizers", "datasets", "huggingface_hub[hf_xet]", "torch", "torchaudio", "librosa", "soundfile", "evaluate", "jiwer", "accelerate", "deepspeed", "wandb"]
