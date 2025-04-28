@@ -5,9 +5,9 @@ from transformers import WhisperConfig, WhisperForConditionalGeneration
 
 # --- 配置参数 ---
 # 作为基础的预训练 Whisper 模型 checkpoint (用于加载配置和部分权重)
-teacher_checkpoint = "openai/whisper-base"
+teacher_checkpoint = "openai/whisper-medium"
 # 学生模型解码器层数
-student_decoder_layers = 2
+student_decoder_layers = 4
 # 保存学生模型结构和初始权重的位置
 student_model_save_path = "./iteboshi" # 本地路径
 

@@ -27,27 +27,30 @@ logger = logging.getLogger(__name__)
 # --- 配置参数 ---
 # Hugging Face 配置
 hf_username: str = "kiritan"
-hf_logmel_repo_name: str = "iteboshi.logmel"       # Log-Mel 特征数据集仓库
+
+num_mel_bins = 80 # <--- 在这里选择 80 或 128
+
+hf_logmel_repo_name: str = f"iteboshi.logmel.{num_mel_bins}bins"       # Log-Mel 特征数据集仓库
 hf_student_repo_name: str = "iteboshi"             # 训练后上传的学生模型仓库
 hf_token: Optional[str] = HfFolder.get_token()     # 尝试从缓存获取 token
 
 # 模型与 Processor 配置
 student_model_path: str = "./iteboshi"            # 初始学生模型路径
-processor_checkpoint: str = "openai/whisper-base" # 加载组件的源 checkpoint
+processor_checkpoint: str = "openai/whisper-medium" # 加载组件的源 checkpoint
 model_language: str = "Chinese"                   # Whisper 指定的语言
 model_task: str = "transcribe"                    # Whisper 指定的任务
 
 # 训练超参数
 training_output_dir: str = "./iteboshi_temp"       # 本地训练输出/缓存目录
-per_device_train_batch_size: int = 12              # 显著减小以防止 OOM
-per_device_eval_batch_size: int = 12               # 显著减小
-gradient_accumulation_steps: int = 4               # 增加以维持有效批次大小 (8*4=32)
+per_device_train_batch_size: int = 4               # 显著减小以防止 OOM
+per_device_eval_batch_size: int = 4                # 显著减小
+gradient_accumulation_steps: int = 8               # 增加以维持有效批次大小 (8*4=32)
 learning_rate: float = 2e-5
 warmup_steps: int = 500
-max_steps: int = 10000                             # 增加训练步数
+max_steps: int = 20000                             # 增加训练步数
 gradient_checkpointing: bool = True
-fp16: bool = True                                  # 推荐使用 fp16，更广泛支持
-bf16: bool = False                                 # 除非确定需要且支持 bf16
+fp16: bool = False                                 # 推荐使用 fp16，更广泛支持
+bf16: bool = True                                  # 除非确定需要且支持 bf16
 
 # 评估与日志记录
 evaluation_strategy: str = "steps"
@@ -77,7 +80,8 @@ class DataCollatorSpeechSeq2SeqWithPadding:
         batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt") # type: ignore
 
         # 使用 tokenizer 对 labels 进行填充
-        # type: ignore 用于忽略 Pyright 可能对 processor.tokenizer 访问的警告
+        # type: ignore #
+        # 用于忽略 Pyright 可能对 processor.tokenizer 访问的警告
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt") # type: ignore
 
         # 将标签中的 padding token 替换为 -100
@@ -173,11 +177,11 @@ def main():
         logger.error(f"加载 Feature Extractor 或 TokenizerFast 失败: {e}", exc_info=True)
         return
 
-    # 2. 加载 Log-Mel 特征数据集 (只加载 train/validation)
+    # 2. 加载 Log-Mel 特征数据集 (只加载 train/validation/test)
     logmel_repo_id = f"{hf_username}/{hf_logmel_repo_name}"
-    logger.info(f"从仓库加载 Log-Mel 数据集的 'train' 和 'validation' splits: {logmel_repo_id}")
+    logger.info(f"从仓库加载 Log-Mel 数据集的 'train' 'validation' 和 'test' splits: {logmel_repo_id}")
     try:
-        splits_to_load = ["train", "validation"]
+        splits_to_load = ["train", "validation", "test"]
         dataset = DatasetDict()
         for split in splits_to_load:
             try:
@@ -267,11 +271,18 @@ def main():
     data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
     logger.info("Data Collator 实例化完成。")
 
-    # 5. 加载评估指标 (WER)
-    logger.info("加载 WER 评估指标...")
+    # --- 5. 加载评估指标 (WER 和 CER) ---
+    logger.info("-" * 30 + " 步骤 5: 加载评估指标 " + "-" * 30)
     try:
-        metric = evaluate.load("wer")
-    except Exception as e: logger.error(f"加载 WER 指标失败: {e}"); return
+        # 加载 WER 指标
+        wer_metric = evaluate.load("wer")
+        logger.info("WER 指标加载成功。")
+        # 加载 CER 指标
+        cer_metric = evaluate.load("cer")
+        logger.info("CER 指标加载成功。")
+    except Exception as e:
+        logger.error(f"加载评估指标失败: {e}", exc_info=True)
+        return
 
     # 6. 定义计算指标的函数 (使用加载的 tokenizer)
     def compute_metrics(pred):
@@ -280,11 +291,9 @@ def main():
         label_ids[label_ids == -100] = tokenizer.pad_token_id
         pred_str = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
         label_str = tokenizer.batch_decode(label_ids, skip_special_tokens=True)
-        try:
-            results = metric.compute(predictions=pred_str, references=label_str)
-            wer = 100 * results['wer'] if results and 'wer' in results else float('inf')
-        except Exception as e: logger.warning(f"计算 WER 时出错: {e}"); wer = float('inf')
-        return {"wer": wer}
+        wer = 100 * wer_metric.compute(predictions=pred_str, references=label_str) # type: ignore
+        cer = 100 * cer_metric.compute(predictions=pred_str, references=label_str) # type: ignore
+        return {"wer": wer, "cer": cer}
     logger.info("Compute Metrics 函数定义完成。")
 
     # 7. 加载学生模型 (使用加载的 tokenizer 设置 config)
@@ -387,13 +396,47 @@ def main():
         #     trainer.log_metrics("test", test_metrics)
         #     trainer.save_metrics("test", test_metrics)
 
+        logger.info("准备将最终/最佳模型转换为 FP16 并推送到 Hugging Face Hub...")
+
+        # trainer.model 现在是训练结束时加载的最佳模型（如果 load_best_model_at_end=True）
+        # 或者训练结束时的最后一个模型
+        logger.info(f"当前模型精度: {trainer.model.dtype}")
+        if trainer.model.dtype != torch.float16:
+            logger.info("将模型转换为 FP16...")
+            try:
+                trainer.model = trainer.model.half()
+                # 转换后最好将模型移回 CPU，因为 push_to_hub 内部的 save_pretrained 在 CPU 上执行更安全
+                # trainer.model.to('cpu') # 移到 CPU
+                logger.info(f"模型已成功转换为 FP16 (dtype: {trainer.model.dtype})") # 并移至 {trainer.model.device}
+            except Exception as e:
+                logger.error(f"模型转换为 FP16 失败: {e}", exc_info=True)
+                logger.warning("将尝试以上传原始精度的模型。")
+
+
         logger.info("准备将最终/最佳模型推送到 Hugging Face Hub...")
         try:
             trainer.push_to_hub(commit_message="训练结束，上传最终模型")
+
+
+            logger.info("保存 FP16 模型对应的 Processor 到 Hub...")
+            processor.push_to_hub(hub_model_id, commit_message="上传 FP16 模型对应的 Processor")
+
+            logger.info(f"Processor 也已上传到 {hub_model_id}")
+
             logger.info(f"模型成功上传到 Hugging Face Hub: {hub_model_id}")
         except Exception as e:
             logger.error(f"上传模型到 Hub 时出错: {e}", exc_info=True)
-            logger.info(f"你可以稍后手动上传保存在 {training_args.output_dir} 的模型文件。")
+            # 如果上传失败，尝试在本地保存 FP16 模型
+            try:
+                final_fp16_save_path = os.path.join(training_args.output_dir, "final_model_fp16")
+                logger.warning(f"Hub 上传失败，尝试将 FP16 模型保存在本地: {final_fp16_save_path}")
+                # trainer.save_model 会保存 trainer.model，此刻它已经是 FP16 了
+                trainer.save_model(final_fp16_save_path)
+                # 同时保存 processor 配置
+                processor.save_pretrained(final_fp16_save_path)
+                logger.info(f"FP16 模型和 Processor 已保存在本地: {final_fp16_save_path}")
+            except Exception as save_e:
+                logger.error(f"在 Hub 上传失败后，本地保存 FP16 模型也失败了: {save_e}", exc_info=True)
 
     except Exception as e:
         logger.error(f"训练过程中发生严重错误: {e}", exc_info=True)
