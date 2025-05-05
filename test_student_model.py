@@ -19,12 +19,12 @@ MODEL_STUDENT = "kiritan/iteboshi"
 SOURCE_DATASET_NAME = "mozilla-foundation/common_voice_11_0"
 LANGUAGE_CODE = "zh-CN" # Common Voice 的中文简体代码
 TEST_SPLIT_NAME = "test" # 使用测试集
-NUM_TEST_SAMPLES = 1000   # 测试样本数量 (设置为 None 测试所有样本)
+NUM_TEST_SAMPLES = 100   # 测试样本数量 (设置为 None 测试所有样本)
 AUDIO_COLUMN = "audio"
 TEXT_COLUMN = "sentence" # Common Voice 中包含文本的列名通常是 'sentence'
 
 # 推理参数
-DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PIPELINE_BATCH_SIZE = 16 # Pipeline 内部的批处理大小，根据显存调整
 MAP_BATCH_SIZE = PIPELINE_BATCH_SIZE * 2 # dataset.map 的批处理大小
 
