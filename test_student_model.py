@@ -12,8 +12,8 @@ from transformers import pipeline, AutoProcessor, AutoModelForSpeechSeq2Seq
 
 # --- 配置参数 ---
 # 模型 ID
-MODEL_OFFICIAL = "openai/whisper-medium"
-MODEL_STUDENT = "kiritan/iteboshi" # 你的模型 Hub ID
+MODEL_OFFICIAL = ["openai/whisper-base", "openai/whisper-tiny", "openai/whisper-small", "openai/whisper-medium"]
+MODEL_STUDENT = "kiritan/iteboshi"
 
 # 数据集参数
 SOURCE_DATASET_NAME = "mozilla-foundation/common_voice_11_0"
@@ -269,7 +269,7 @@ def main():
 
     # 2. 依次评估每个模型
     results = {}
-    models_to_test = [MODEL_OFFICIAL, MODEL_STUDENT]
+    models_to_test = MODEL_OFFICIAL + [MODEL_STUDENT]
 
     for model_id in models_to_test:
         # 注意：每次评估都会重新加载数据集的一个副本（如果map修改了它）
