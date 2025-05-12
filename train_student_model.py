@@ -53,7 +53,7 @@ bf16: bool = True  # 除非确定需要且支持 bf16
 # 评估与日志记录
 evaluation_strategy: str = "steps"
 eval_steps: int = 1000  # 评估频率
-save_steps: int = 1000  # 保存频率
+save_steps: int = 5000  # 保存频率
 logging_steps: int = 25  # 日志频率 (包括 loss 打印和 wandb)
 save_total_limit: int = 2  # 最多保留的 checkpoint 数量
 
