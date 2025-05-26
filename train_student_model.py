@@ -29,7 +29,7 @@ hf_username: str = "kiritan"
 num_mel_bins = 80  # <--- 在这里选择 80 或 128
 
 hf_logmel_repo_name: str = f"iteboshi.logmel.{num_mel_bins}bins"  # Log-Mel 特征数据集仓库
-hf_student_repo_name: str = "iteboshi"  # 训练后上传的学生模型仓库
+hf_student_repo_name: str = "iteboshi-medium"  # 训练后上传的学生模型仓库
 hf_token: Optional[str] = HfFolder.get_token()  # 尝试从缓存获取 token
 
 # 模型与 Processor 配置
@@ -53,9 +53,9 @@ bf16: bool = True  # 除非确定需要且支持 bf16
 # 评估与日志记录
 evaluation_strategy: str = "steps"
 eval_steps: int = 1000  # 评估频率
-save_steps: int = 5000  # 保存频率
+save_steps: int = 1000  # 保存频率
 logging_steps: int = 25  # 日志频率 (包括 loss 打印和 wandb)
-save_total_limit: int = 2  # 最多保留的 checkpoint 数量
+save_total_limit: int = 3  # 最多保留的 checkpoint 数量
 
 # 数据处理配置
 num_proc_tokenizer: int = max(1, os.cpu_count() * 3 // 4)  # Tokenizer map 使用的进程数 # type: ignore
@@ -364,7 +364,7 @@ def main():
         greater_is_better=False,
         predict_with_generate=True,
         generation_max_length=generation_max_len,
-        push_to_hub=True,
+        push_to_hub=False,
         hub_model_id=hub_model_id,
         hub_strategy="checkpoint",  # 每 save_steps 上传一次 checkpoint
         hub_token=hf_token,  # 传递 token
@@ -410,45 +410,46 @@ def main():
         #     trainer.log_metrics("test", test_metrics)
         #     trainer.save_metrics("test", test_metrics)
 
-        logger.info("准备将最终/最佳模型转换为 FP16 并推送到 Hugging Face Hub...")
+        logger.info("准备将最终/最佳模型转换为 FP32 并推送到 Hugging Face Hub...")
 
         # trainer.model 现在是训练结束时加载的最佳模型（如果 load_best_model_at_end=True）
         # 或者训练结束时的最后一个模型
         logger.info(f"当前模型精度: {trainer.model.dtype}")
-        if trainer.model.dtype != torch.float16:
-            logger.info("将模型转换为 FP16...")
+        if trainer.model.dtype != torch.float32:
+            logger.info("将模型转换为 FP32...")
             try:
-                trainer.model = trainer.model.half()
+                trainer.model = trainer.model.float()
                 # 转换后最好将模型移回 CPU，因为 push_to_hub 内部的 save_pretrained 在 CPU 上执行更安全
-                # trainer.model.to('cpu') # 移到 CPU
-                logger.info(f"模型已成功转换为 FP16 (dtype: {trainer.model.dtype})")  # 并移至 {trainer.model.device}
+                trainer.model.to('cpu') # 移到 CPU
+                logger.info(f"模型已成功转换为 FP32 (dtype: {trainer.model.dtype})")  # 并移至 {trainer.model.device}
             except Exception as e:
-                logger.error(f"模型转换为 FP16 失败: {e}", exc_info=True)
+                logger.error(f"模型转换为 FP32 失败: {e}", exc_info=True)
                 logger.warning("将尝试以上传原始精度的模型。")
 
         logger.info("准备将最终/最佳模型推送到 Hugging Face Hub...")
+
         try:
             trainer.push_to_hub(commit_message="训练结束，上传最终模型")
 
-            logger.info("保存 FP16 模型对应的 Processor 到 Hub...")
-            tokenizer.push_to_hub(hub_model_id, commit_message="上传 FP16 模型对应的 Processor")
+            logger.info("保存 FP32 模型对应的 Processor 到 Hub...")
+            tokenizer.push_to_hub(hub_model_id, commit_message="上传 FP32 模型对应的 Processor")
 
             logger.info(f"Processor 也已上传到 {hub_model_id}")
 
             logger.info(f"模型成功上传到 Hugging Face Hub: {hub_model_id}")
         except Exception as e:
             logger.error(f"上传模型到 Hub 时出错: {e}", exc_info=True)
-            # 如果上传失败，尝试在本地保存 FP16 模型
+            # 如果上传失败，尝试在本地保存 FP32 模型
             try:
-                final_fp16_save_path = os.path.join(training_args.output_dir, "final_model_fp16")
-                logger.warning(f"Hub 上传失败，尝试将 FP16 模型保存在本地: {final_fp16_save_path}")
-                # trainer.save_model 会保存 trainer.model，此刻它已经是 FP16 了
-                trainer.save_model(final_fp16_save_path)
+                final_fp32_save_path = os.path.join(training_args.output_dir, "final_model_fp32")
+                logger.warning(f"Hub 上传失败，尝试将 FP32 模型保存在本地: {final_fp32_save_path}")
+                # trainer.save_model 会保存 trainer.model，此刻它已经是 FP32 了
+                trainer.save_model(final_fp32_save_path)
                 # 同时保存 processor 配置
-                tokenizer.save_pretrained(final_fp16_save_path)
-                logger.info(f"FP16 模型和 Processor 已保存在本地: {final_fp16_save_path}")
+                tokenizer.save_pretrained(final_fp32_save_path)
+                logger.info(f"FP32 模型和 Processor 已保存在本地: {final_fp32_save_path}")
             except Exception as save_e:
-                logger.error(f"在 Hub 上传失败后，本地保存 FP16 模型也失败了: {save_e}", exc_info=True)
+                logger.error(f"在 Hub 上传失败后，本地保存 FP32 模型也失败了: {save_e}", exc_info=True)
 
     except Exception as e:
         logger.error(f"训练过程中发生严重错误: {e}", exc_info=True)
