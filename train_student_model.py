@@ -15,7 +15,7 @@ from transformers import (
     WhisperTokenizerFast,
     WhisperForConditionalGeneration,
     Seq2SeqTrainingArguments,
-    Seq2SeqTrainer, BatchFeature,
+    Seq2SeqTrainer, BatchFeature, WhisperProcessor,
 )
 
 # --- 配置日志 ---
@@ -148,7 +148,7 @@ def main():
     use_cuda = torch.cuda.is_available()
     if not use_cuda:
         logger.warning("未检测到 CUDA GPU。训练将在 CPU 上进行，非常慢。")
-        global fp16, bf16  # 允许修改全局变量
+        global fp16, bf16
         fp16 = bf16 = False
         logger.warning("已禁用混合精度训练。")
     else:
@@ -352,7 +352,7 @@ def main():
         gradient_checkpointing=gradient_checkpointing,
         fp16=fp16,  # 使用 fp16
         bf16=bf16,  # 使用 bf16
-        evaluation_strategy=evaluation_strategy,
+        eval_strategy=evaluation_strategy,
         eval_steps=eval_steps,
         save_strategy=evaluation_strategy,
         save_steps=save_steps,
@@ -434,7 +434,9 @@ def main():
             logger.info("保存 FP32 模型对应的 Processor 到 Hub...")
             tokenizer.push_to_hub(hub_model_id, commit_message="上传 FP32 模型对应的 Processor")
 
-            logger.info(f"Processor 也已上传到 {hub_model_id}")
+            logger.info(f"使用来自 '{processor_checkpoint}' 的 feature_extractor 和 tokenizer (已设置 language/task) 创建 WhisperProcessor...")
+            final_processor: WhisperProcessor = WhisperProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+            final_processor.push_to_hub(hub_model_id, commit_message="上传完整的 Processor (含 preprocessor_config.json)")
 
             logger.info(f"模型成功上传到 Hugging Face Hub: {hub_model_id}")
         except Exception as e:
@@ -446,6 +448,7 @@ def main():
                 # trainer.save_model 会保存 trainer.model，此刻它已经是 FP32 了
                 trainer.save_model(final_fp32_save_path)
                 # 同时保存 processor 配置
+                final_processor.save_pretrained(final_fp32_save_path)
                 tokenizer.save_pretrained(final_fp32_save_path)
                 logger.info(f"FP32 模型和 Processor 已保存在本地: {final_fp32_save_path}")
             except Exception as save_e:

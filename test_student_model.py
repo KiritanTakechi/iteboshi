@@ -25,7 +25,7 @@ MODEL_OFFICIAL = ["openai/whisper-base", "openai/whisper-tiny", "openai/whisper-
 # 如果 MODEL_STUDENT = "kiritan/iteboshi" 是 Hub ID，我们需要一个本地路径来计算大小
 # 假设学生模型在训练后保存在如 "./iteboshi_student_model_trained" 或类似路径
 # 为了演示，我们先假设它是一个Hub ID，然后尝试获取Hub上的大小，或者如果能映射到本地就计算本地的
-STUDENT_MODEL_HUB_ID = ["kiritan/iteboshi-tiny", "kiritan/iteboshi-small", "kiritan/iteboshi-medium"] # 学生模型在 Hub 上的 ID
+STUDENT_MODEL_HUB_ID = ["kiritan/iteboshi"] # 学生模型在 Hub 上的 ID
 # 如果你知道学生模型的确切本地保存路径 (例如，训练脚本的输出目录)，请在这里指定
 # 这将用于精确计算学生模型的大小
 STUDENT_MODEL_LOCAL_PATH = "./iteboshi_student_model_trained" # 假设的本地路径，你需要根据实际情况修改
@@ -421,7 +421,7 @@ def main():
         return
 
     results = {}
-    models_to_test = MODEL_OFFICIAL + STUDENT_MODEL_HUB_ID # 使用 Hub ID 来加载模型
+    models_to_test = MODEL_OFFICIAL + [STUDENT_MODEL_HUB_ID] # 使用 Hub ID 来加载模型
 
     for model_id_or_path in models_to_test:
         is_student = (model_id_or_path == STUDENT_MODEL_HUB_ID)
